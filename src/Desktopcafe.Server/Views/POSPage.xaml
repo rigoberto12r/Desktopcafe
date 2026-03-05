@@ -1,0 +1,101 @@
+<Page
+    x:Class="Desktopcafe.Server.Views.POSPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Enabled">
+
+  <Grid Padding="32" ColumnSpacing="24">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="2*" />
+      <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <!-- Product Catalog -->
+    <Grid Grid.Column="0">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+
+      <TextBlock Text="Punto de Venta" Style="{StaticResource PageHeaderStyle}" />
+
+      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
+        <AutoSuggestBox x:Name="SearchBox" PlaceholderText="Buscar producto..." Width="250"
+                         QueryIcon="Find" TextChanged="SearchBox_TextChanged" />
+        <ComboBox x:Name="CategoryFilter" Header="" PlaceholderText="Categoria" Width="150"
+                  SelectionChanged="CategoryFilter_SelectionChanged">
+          <ComboBoxItem Content="Todas" IsSelected="True" />
+          <ComboBoxItem Content="Bebidas" />
+          <ComboBoxItem Content="Snacks" />
+          <ComboBoxItem Content="Papeleria" />
+          <ComboBoxItem Content="Otros" />
+        </ComboBox>
+      </StackPanel>
+
+      <GridView Grid.Row="2" x:Name="ProductGrid" IsItemClickEnabled="True" ItemClick="ProductGrid_ItemClick">
+        <GridView.ItemTemplate>
+          <DataTemplate>
+            <Border Style="{StaticResource ComputerCardBaseStyle}" Width="150" Height="120" Padding="12">
+              <StackPanel Spacing="4" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <FontIcon Glyph="&#xE7BF;" FontSize="24" HorizontalAlignment="Center" />
+                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextAlignment="Center"
+                           TextTrimming="CharacterEllipsis" MaxLines="2" />
+                <TextBlock Text="{Binding PriceText}" FontSize="16" FontWeight="Bold"
+                           Foreground="{StaticResource AccentPrimaryBrush}" TextAlignment="Center" />
+                <TextBlock Text="{Binding StockText}" FontSize="11"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextAlignment="Center" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </GridView.ItemTemplate>
+      </GridView>
+    </Grid>
+
+    <!-- Cart -->
+    <Border Grid.Column="1" Style="{StaticResource KpiCardStyle}">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Carrito" Style="{StaticResource SectionHeaderStyle}" />
+
+        <ListView Grid.Row="1" x:Name="CartList">
+          <ListView.ItemTemplate>
+            <DataTemplate>
+              <Grid ColumnSpacing="8" Padding="4">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding QuantityText}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="{Binding SubtotalText}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button Grid.Column="3" Click="RemoveCartItem_Click" Tag="{Binding Index}" Padding="4">
+                  <FontIcon Glyph="&#xE711;" FontSize="12" />
+                </Button>
+              </Grid>
+            </DataTemplate>
+          </ListView.ItemTemplate>
+        </ListView>
+
+        <StackPanel Grid.Row="2" Spacing="8">
+          <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+          <Grid>
+            <TextBlock Text="Total:" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock x:Name="CartTotalText" Text="$0.00" FontSize="24" FontWeight="Bold"
+                       HorizontalAlignment="Right" Foreground="{StaticResource AccentPrimaryBrush}" />
+          </Grid>
+          <Button Content="Cobrar" Style="{StaticResource AccentButtonStyle}"
+                  HorizontalAlignment="Stretch" Click="Checkout_Click" />
+          <Button Content="Limpiar" HorizontalAlignment="Stretch" Click="ClearCart_Click" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</Page>

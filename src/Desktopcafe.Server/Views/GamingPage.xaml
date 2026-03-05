@@ -1,0 +1,40 @@
+<Page
+    x:Class="Desktopcafe.Server.Views.GamingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Enabled">
+
+  <Grid Padding="32">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+
+    <!-- Header -->
+    <StackPanel Orientation="Horizontal" Spacing="16">
+      <TextBlock Text="Juegos" Style="{StaticResource PageHeaderStyle}" />
+      <Button x:Name="AddGameBtn" Content="Agregar Juego" Style="{StaticResource AccentButtonStyle}" Click="AddGame_Click">
+        <Button.Icon><FontIcon Glyph="&#xE710;" /></Button.Icon>
+      </Button>
+    </StackPanel>
+
+    <!-- Games Grid -->
+    <GridView Grid.Row="1" x:Name="GamesGrid" SelectionMode="None">
+      <GridView.ItemTemplate>
+        <DataTemplate>
+          <Border Style="{StaticResource ComputerCardBaseStyle}" Width="200" Height="160" Padding="16">
+            <StackPanel Spacing="4" VerticalAlignment="Center" HorizontalAlignment="Center">
+              <FontIcon Glyph="&#xE7FC;" FontSize="32" HorizontalAlignment="Center" />
+              <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextAlignment="Center"
+                         TextTrimming="CharacterEllipsis" MaxLines="2" />
+              <TextBlock Text="{Binding Category}" FontSize="12"
+                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextAlignment="Center" />
+              <TextBlock Text="{Binding PlaysText}" FontSize="12"
+                         Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextAlignment="Center" />
+            </StackPanel>
+          </Border>
+        </DataTemplate>
+      </GridView.ItemTemplate>
+    </GridView>
+  </Grid>
+</Page>

@@ -1,0 +1,100 @@
+<Page
+    x:Class="Desktopcafe.Server.Views.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Desktopcafe.Server.Views"
+    NavigationCacheMode="Enabled">
+
+  <ScrollViewer Padding="32">
+    <StackPanel Spacing="16">
+      <TextBlock Text="Dashboard" Style="{StaticResource PageHeaderStyle}" />
+
+      <!-- KPI Cards -->
+      <ItemsControl x:Name="KpiPanel">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <StackPanel Orientation="Horizontal" Spacing="16" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+      </ItemsControl>
+
+      <Grid ColumnSpacing="16">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Revenue KPI -->
+        <Border Grid.Column="0" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Ingresos Hoy" Style="{StaticResource DataLabelStyle}" />
+            <TextBlock x:Name="RevenueText" Text="$0.00" Style="{StaticResource DataValueStyle}" />
+          </StackPanel>
+        </Border>
+
+        <!-- Sessions KPI -->
+        <Border Grid.Column="1" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Sesiones Activas" Style="{StaticResource DataLabelStyle}" />
+            <TextBlock x:Name="SessionsText" Text="0" Style="{StaticResource DataValueStyle}" />
+          </StackPanel>
+        </Border>
+
+        <!-- PCs KPI -->
+        <Border Grid.Column="2" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="PCs en Uso" Style="{StaticResource DataLabelStyle}" />
+            <TextBlock x:Name="PCsText" Text="0/0" Style="{StaticResource DataValueStyle}" />
+          </StackPanel>
+        </Border>
+
+        <!-- Print Jobs KPI -->
+        <Border Grid.Column="3" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Impresiones Hoy" Style="{StaticResource DataLabelStyle}" />
+            <TextBlock x:Name="PrintsText" Text="0" Style="{StaticResource DataValueStyle}" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- Activity and Alerts -->
+      <Grid ColumnSpacing="16">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Actividad Reciente" Style="{StaticResource SectionHeaderStyle}" />
+            <ListView x:Name="ActivityList" MaxHeight="300">
+              <ListView.ItemTemplate>
+                <DataTemplate>
+                  <StackPanel Orientation="Horizontal" Spacing="8" Padding="4">
+                    <TextBlock Text="{Binding Timestamp}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" />
+                    <TextBlock Text="{Binding Description}" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListView.ItemTemplate>
+            </ListView>
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="1" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Alertas" Style="{StaticResource SectionHeaderStyle}" />
+            <ListView x:Name="AlertsList" MaxHeight="300">
+              <ListView.ItemTemplate>
+                <DataTemplate>
+                  <InfoBar Severity="Warning" Message="{Binding Message}" IsClosable="False" IsOpen="True" />
+                </DataTemplate>
+              </ListView.ItemTemplate>
+            </ListView>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </StackPanel>
+  </ScrollViewer>
+</Page>

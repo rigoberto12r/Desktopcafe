@@ -1,0 +1,118 @@
+<Page
+    x:Class="Desktopcafe.Server.Views.ReportsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Enabled">
+
+  <ScrollViewer Padding="32">
+    <StackPanel Spacing="16">
+      <TextBlock Text="Reportes" Style="{StaticResource PageHeaderStyle}" />
+
+      <!-- Date Selection -->
+      <StackPanel Orientation="Horizontal" Spacing="16">
+        <CalendarDatePicker x:Name="DatePicker" Header="Fecha" DateChanged="DatePicker_DateChanged"
+                             PlaceholderText="Seleccionar fecha" />
+        <Button Content="Exportar PDF" Click="ExportPdf_Click">
+          <Button.Icon><FontIcon Glyph="&#xE7C3;" /></Button.Icon>
+        </Button>
+        <Button Content="Exportar Excel" Click="ExportExcel_Click">
+          <Button.Icon><FontIcon Glyph="&#xE9F9;" /></Button.Icon>
+        </Button>
+      </StackPanel>
+
+      <!-- KPI Cards -->
+      <Grid ColumnSpacing="16">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Ingresos Sesiones" Style="{StaticResource DataLabelStyle}" />
+            <TextBlock x:Name="SessionRevenueText" Text="$0.00" Style="{StaticResource DataValueStyle}" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="1" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Ingresos Ventas" Style="{StaticResource DataLabelStyle}" />
+            <TextBlock x:Name="SalesRevenueText" Text="$0.00" Style="{StaticResource DataValueStyle}" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="2" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Ingresos Impresiones" Style="{StaticResource DataLabelStyle}" />
+            <TextBlock x:Name="PrintRevenueText" Text="$0.00" Style="{StaticResource DataValueStyle}" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="3" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Total del Dia" Style="{StaticResource DataLabelStyle}" />
+            <TextBlock x:Name="TotalRevenueText" Text="$0.00" Style="{StaticResource DataValueStyle}"
+                       Foreground="{StaticResource AccentPrimaryBrush}" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- Top Products and Hourly Usage -->
+      <Grid ColumnSpacing="16">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Productos Mas Vendidos" Style="{StaticResource SectionHeaderStyle}" />
+            <ListView x:Name="TopProductsList" MaxHeight="300">
+              <ListView.ItemTemplate>
+                <DataTemplate>
+                  <Grid ColumnSpacing="12" Padding="4">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="60" />
+                      <ColumnDefinition Width="80" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding QuantityText}" VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="2" Text="{Binding RevenueText}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  </Grid>
+                </DataTemplate>
+              </ListView.ItemTemplate>
+            </ListView>
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="1" Style="{StaticResource KpiCardStyle}">
+          <StackPanel>
+            <TextBlock Text="Uso por Hora" Style="{StaticResource SectionHeaderStyle}" />
+            <ListView x:Name="HourlyUsageList" MaxHeight="300">
+              <ListView.ItemTemplate>
+                <DataTemplate>
+                  <Grid ColumnSpacing="12" Padding="4">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="80" />
+                      <ColumnDefinition Width="*" />
+                      <ColumnDefinition Width="100" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding HourText}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <ProgressBar Grid.Column="1" Value="{Binding SessionCount}" Maximum="{Binding MaxSessions}"
+                                 VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="{Binding SessionsText}" VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                  </Grid>
+                </DataTemplate>
+              </ListView.ItemTemplate>
+            </ListView>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </StackPanel>
+  </ScrollViewer>
+</Page>
