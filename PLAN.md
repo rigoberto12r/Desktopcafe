@@ -722,52 +722,736 @@ Funcionalidades:
 
 ## 7. Optimizaciones de Rendimiento
 
-### 7.1 Base de Datos
+### Benchmark Targets
+
+| Metrica | Target | Medicion |
+|---|---|---|
+| **Startup del servidor** | < 2 segundos | Desde doble-clic hasta UI interactiva |
+| **Startup del agente** | < 1 segundo | Desde boot hasta conectado al servidor |
+| **Inicio de sesion (timer)** | < 100ms | Click en "Iniciar" hasta PC desbloqueada |
+| **Bloqueo de PC** | < 200ms | Timer llega a 0 hasta pantalla bloqueada |
+| **Renderizar mapa de PCs** | < 50ms | 50 PCs con actualizacion en tiempo real |
+| **Busqueda de productos (POS)** | < 30ms | Filtrado de 500+ productos |
+| **Generar reporte mensual** | < 3 segundos | 30 dias, todas las metricas + graficas |
+| **Exportar PDF** | < 2 segundos | Reporte completo con graficas |
+| **Uso de RAM servidor** | < 150 MB | Con 50 PCs activas |
+| **Uso de RAM agente** | < 40 MB | En sesion activa |
+| **Tamano BD (1 ano)** | < 500 MB | Uso intensivo, 30 PCs, POS activo |
+| **Reconexion agente** | < 3 segundos | Despues de caida de red momentanea |
+
+---
+
+### 7.1 Base de Datos - SQLite Tuning Avanzado
+
 ```csharp
-// SQLite en modo WAL (Write-Ahead Logging) - lecturas no bloquean escrituras
-optionsBuilder.UseSqlite("Data Source=desktopcafe.db", opt =>
+// === AppDbContext.cs - Configuracion optimizada de SQLite ===
+
+protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 {
-    opt.CommandTimeout(30);
-});
-// Pragma WAL mode en OnConfiguring
-connection.Execute("PRAGMA journal_mode=WAL;");
-connection.Execute("PRAGMA synchronous=NORMAL;");
-connection.Execute("PRAGMA cache_size=-20000;"); // 20MB cache
+    var conn = new SqliteConnection("Data Source=desktopcafe.db;Cache=Shared");
+    conn.Open();
+
+    // PRAGMAs de rendimiento (ejecutar una vez al abrir conexion)
+    using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+        PRAGMA journal_mode = WAL;          -- Write-Ahead Logging: lecturas no bloquean escrituras
+        PRAGMA synchronous = NORMAL;        -- Balance entre seguridad y velocidad
+        PRAGMA cache_size = -20000;         -- 20MB de cache en RAM (default 2MB)
+        PRAGMA temp_store = MEMORY;         -- Tablas temporales en RAM (no disco)
+        PRAGMA mmap_size = 268435456;       -- 256MB memory-mapped I/O
+        PRAGMA page_size = 4096;            -- 4KB paginas (optimo para SSD)
+        PRAGMA auto_vacuum = INCREMENTAL;   -- Recuperar espacio sin bloquear
+        PRAGMA busy_timeout = 5000;         -- 5s timeout antes de error BUSY
+        PRAGMA optimize;                    -- Optimizar automaticamente
+    ";
+    cmd.ExecuteNonQuery();
+
+    optionsBuilder
+        .UseSqlite(conn)
+        .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking); // Por defecto sin tracking
+}
+
+// === Indices estrategicos para consultas frecuentes ===
+protected override void OnModelCreating(ModelBuilder modelBuilder)
+{
+    // Sessions: busqueda por estado activo (la consulta mas frecuente)
+    modelBuilder.Entity<Session>()
+        .HasIndex(s => new { s.Status, s.ComputerId })
+        .HasFilter("[Status] = 'Active'")  // Indice parcial: solo sesiones activas
+        .HasDatabaseName("IX_Sessions_Active");
+
+    // Sessions: reportes por fecha
+    modelBuilder.Entity<Session>()
+        .HasIndex(s => s.CreatedAt)
+        .HasDatabaseName("IX_Sessions_Date");
+
+    // Sales: reportes por fecha y empleado
+    modelBuilder.Entity<Sale>()
+        .HasIndex(s => new { s.CreatedAt, s.EmployeeId })
+        .HasDatabaseName("IX_Sales_Date_Employee");
+
+    // Products: busqueda por nombre y categoria (POS)
+    modelBuilder.Entity<Product>()
+        .HasIndex(p => new { p.Category, p.Name })
+        .HasFilter("[IsActive] = 1")
+        .HasDatabaseName("IX_Products_Active");
+
+    // Clients: busqueda por codigo y nombre
+    modelBuilder.Entity<Client>()
+        .HasIndex(c => c.Code)
+        .IsUnique()
+        .HasDatabaseName("IX_Clients_Code");
+
+    modelBuilder.Entity<Client>()
+        .HasIndex(c => c.Name)
+        .HasDatabaseName("IX_Clients_Name");
+
+    // Computers: estado actual
+    modelBuilder.Entity<Computer>()
+        .HasIndex(c => c.Status)
+        .HasDatabaseName("IX_Computers_Status");
+}
 ```
 
-### 7.2 Cache en Memoria
+### 7.2 Compiled Queries (EF Core)
+
 ```csharp
-// Cache de datos frecuentes (tarifas, productos, config)
-services.AddMemoryCache();
-// Cache de dashboard KPIs con expiracion de 10 segundos
-var kpis = await _cache.GetOrCreateAsync("dashboard_kpis", async entry =>
+// === Consultas pre-compiladas para las operaciones mas frecuentes ===
+// Se compilan una sola vez y se reutilizan (evita overhead de traduccion SQL)
+
+public static class CompiledQueries
 {
-    entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(10);
-    return await _reportRepo.GetDashboardKpisAsync();
-});
+    // Obtener todas las sesiones activas (ejecutada cada segundo por el timer)
+    public static readonly Func<AppDbContext, IAsyncEnumerable<Session>>
+        GetActiveSessions = EF.CompileAsyncQuery(
+            (AppDbContext db) => db.Sessions
+                .Include(s => s.Computer)
+                .Include(s => s.Client)
+                .Where(s => s.Status == SessionStatus.Active)
+                .OrderBy(s => s.PlannedEnd));
+
+    // Obtener computadora por ID con sesion activa
+    public static readonly Func<AppDbContext, int, Task<Computer?>>
+        GetComputerWithActiveSession = EF.CompileAsyncQuery(
+            (AppDbContext db, int id) => db.Computers
+                .Include(c => c.Sessions.Where(s => s.Status == SessionStatus.Active))
+                .FirstOrDefault(c => c.Id == id));
+
+    // Obtener productos activos por categoria (POS)
+    public static readonly Func<AppDbContext, string, IAsyncEnumerable<Product>>
+        GetProductsByCategory = EF.CompileAsyncQuery(
+            (AppDbContext db, string category) => db.Products
+                .Where(p => p.IsActive && p.Category == category)
+                .OrderBy(p => p.Name));
+
+    // Ventas del dia (dashboard)
+    public static readonly Func<AppDbContext, DateTime, Task<decimal>>
+        GetTodaySalesTotal = EF.CompileAsyncQuery(
+            (AppDbContext db, DateTime today) => db.Sales
+                .Where(s => s.CreatedAt >= today)
+                .Sum(s => s.Total));
+
+    // Buscar cliente por codigo o nombre (AutoSuggestBox)
+    public static readonly Func<AppDbContext, string, IAsyncEnumerable<Client>>
+        SearchClients = EF.CompileAsyncQuery(
+            (AppDbContext db, string term) => db.Clients
+                .Where(c => c.IsActive &&
+                    (c.Code.Contains(term) || c.Name.Contains(term)))
+                .Take(10)
+                .OrderBy(c => c.Name));
+}
 ```
 
-### 7.3 UI
-- **Virtualizacion** en todas las listas largas (ItemsRepeater con virtualizacion)
-- **x:Load** para carga diferida de controles no visibles
-- **Compiled Bindings (x:Bind)** en vez de Binding clasico (10x mas rapido)
-- **Incremental loading** para DataGrid con muchos registros
-- **Deferred rendering** para paginas pesadas (reportes)
-- **Connected Animations** para transiciones fluidas entre vistas
+### 7.3 Cache Multinivel
 
-### 7.4 Comunicacion
-- **SignalR con MessagePack** para serialización binaria (mas rapido que JSON)
-- **Reconexion automatica** con backoff exponencial
-- **Heartbeat cada 30 seg** en vez de polling constante
-- **Batch updates** para actualizar multiples PCs en una sola operacion
+```csharp
+// === CacheService.cs - Sistema de cache de 3 niveles ===
 
-### 7.5 General
-- **Async/await** en todas las operaciones I/O (cero bloqueo de UI thread)
-- **CancellationToken** en operaciones largas
-- **IAsyncEnumerable** para streaming de datos grandes
-- **Object pooling** para objetos frecuentes (DTOs)
-- **Compiled queries** en EF Core para consultas frecuentes
-- **ReadyToRun (R2R) compilation** para startup rapido
+public class CacheService : ICacheService
+{
+    private readonly IMemoryCache _cache;
+    private readonly AppDbContext _db;
+
+    // NIVEL 1: Cache en diccionario estatico (0ms acceso, datos que casi nunca cambian)
+    private static readonly ConcurrentDictionary<string, object> _staticCache = new();
+
+    // NIVEL 2: MemoryCache con expiracion (< 1ms acceso)
+    // NIVEL 3: SQLite (< 5ms acceso local)
+
+    // === Configuracion de tarifas (cambia rara vez) ===
+    public async Task<List<RateConfig>> GetRatesAsync()
+    {
+        return (List<RateConfig>)_staticCache.GetOrAdd("rates",
+            _ => _db.RateConfigs.AsNoTracking().ToList());
+    }
+
+    public void InvalidateRates() => _staticCache.TryRemove("rates", out _);
+
+    // === Productos del POS (cambia poco, se consulta mucho) ===
+    public async Task<List<Product>> GetActiveProductsAsync()
+    {
+        return await _cache.GetOrCreateAsync("products_active", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+            entry.Priority = CacheItemPriority.High;
+            return await _db.Products
+                .AsNoTracking()
+                .Where(p => p.IsActive)
+                .OrderBy(p => p.Category)
+                .ThenBy(p => p.Name)
+                .ToListAsync();
+        });
+    }
+
+    // === Dashboard KPIs (cambia frecuentemente, cache corto) ===
+    public async Task<DashboardDto> GetDashboardAsync()
+    {
+        return await _cache.GetOrCreateAsync("dashboard", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(5);
+            var today = DateTime.Today;
+            return new DashboardDto
+            {
+                TotalRevenue = await CompiledQueries.GetTodaySalesTotal(_db, today),
+                ActiveSessions = await _db.Sessions.CountAsync(s => s.Status == SessionStatus.Active),
+                AvailablePCs = await _db.Computers.CountAsync(c => c.Status == ComputerStatus.Available),
+                TotalPCs = await _db.Computers.CountAsync(),
+                PrintJobsToday = await _db.PrintJobs.CountAsync(p => p.CreatedAt >= today)
+            };
+        });
+    }
+
+    // === Invalidacion selectiva cuando hay cambios ===
+    public void InvalidateProducts() => _cache.Remove("products_active");
+    public void InvalidateDashboard() => _cache.Remove("dashboard");
+}
+```
+
+### 7.4 UI - Rendimiento de WinUI 3
+
+```xml
+<!-- === ComputerMapPage.xaml - GridView virtualizado de PCs === -->
+
+<!-- ItemsRepeater con virtualizacion automatica (solo renderiza lo visible) -->
+<ScrollViewer>
+    <ItemsRepeater
+        ItemsSource="{x:Bind ViewModel.Computers, Mode=OneWay}"
+        Layout="{StaticResource ComputerGridLayout}">
+
+        <!-- x:Bind compilado: 10x mas rapido que Binding clasico -->
+        <ItemsRepeater.ItemTemplate>
+            <DataTemplate x:DataType="models:ComputerViewModel">
+                <!-- x:Load: solo carga en memoria cuando es visible -->
+                <local:ComputerCard
+                    x:Load="{x:Bind IsVisible, Mode=OneWay}"
+                    ComputerName="{x:Bind Name}"
+                    Status="{x:Bind Status, Mode=OneWay}"
+                    TimeRemaining="{x:Bind TimeRemaining, Mode=OneWay}"
+                    ClientName="{x:Bind ClientName, Mode=OneWay}"
+                    Progress="{x:Bind Progress, Mode=OneWay}"
+                    Command="{x:Bind SelectCommand}" />
+            </DataTemplate>
+        </ItemsRepeater.ItemTemplate>
+    </ItemsRepeater>
+</ScrollViewer>
+
+<!-- Layout responsivo: se adapta al ancho disponible -->
+<Page.Resources>
+    <UniformGridLayout
+        x:Key="ComputerGridLayout"
+        MinItemWidth="200"
+        MinItemHeight="180"
+        MinRowSpacing="12"
+        MinColumnSpacing="12"
+        ItemsStretch="Fill" />
+</Page.Resources>
+```
+
+```csharp
+// === TimerViewModel.cs - Actualizacion eficiente del timer ===
+
+public partial class TimerViewModel : ObservableObject
+{
+    private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(1));
+    private readonly CancellationTokenSource _cts = new();
+
+    // ObservableProperty via source generator (cero reflection)
+    [ObservableProperty]
+    private ObservableCollection<SessionViewModel> _activeSessions = new();
+
+    public async Task StartTimerLoopAsync()
+    {
+        while (await _timer.WaitForNextTickAsync(_cts.Token))
+        {
+            // Actualizar solo las sesiones que cambiaron (no toda la lista)
+            foreach (var session in ActiveSessions)
+            {
+                session.UpdateCountdown(); // Solo actualiza TimeRemaining y Progress
+            }
+
+            // Verificar expiraciones (solo las proximas a expirar)
+            var expiring = ActiveSessions
+                .Where(s => s.TimeRemaining <= TimeSpan.Zero)
+                .ToList();
+
+            foreach (var session in expiring)
+            {
+                await ExpireSessionAsync(session);
+            }
+        }
+    }
+}
+
+// === SessionViewModel.cs - Actualizacion granular sin re-render completo ===
+
+public partial class SessionViewModel : ObservableObject
+{
+    [ObservableProperty] private TimeSpan _timeRemaining;
+    [ObservableProperty] private double _progress;     // 0.0 - 1.0
+    [ObservableProperty] private string _statusColor;  // Para el binding de color
+
+    public void UpdateCountdown()
+    {
+        if (IsPaused) return;
+
+        TimeRemaining = PlannedEnd - DateTime.Now;
+        Progress = 1.0 - (TimeRemaining.TotalSeconds / TotalDuration.TotalSeconds);
+
+        // Cambiar color solo cuando cruza un umbral (no cada segundo)
+        var newColor = TimeRemaining.TotalMinutes switch
+        {
+            <= 1 => "Error",       // Rojo: menos de 1 min
+            <= 5 => "Warning",     // Ambar: menos de 5 min
+            _    => "Success"      // Verde: normal
+        };
+
+        if (newColor != StatusColor)
+            StatusColor = newColor;
+    }
+}
+```
+
+### 7.5 SignalR - Comunicacion Optimizada
+
+```csharp
+// === SignalR con MessagePack (50% menos ancho de banda que JSON) ===
+
+// Servidor
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = false;  // Produccion
+    options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(60);
+    options.MaximumReceiveMessageSize = 1024 * 1024; // 1MB max (screenshots)
+    options.StreamBufferCapacity = 20;
+})
+.AddMessagePackProtocol(options =>
+{
+    options.SerializerOptions = MessagePackSerializerOptions.Standard
+        .WithCompression(MessagePackCompression.Lz4BlockArray); // Compresion LZ4
+});
+
+// === Batch updates: actualizar 50 PCs en 1 mensaje (no 50 mensajes) ===
+
+public class CafeHub : Hub<IAgentHub>
+{
+    // Enviar actualizacion de timer a TODOS los agentes en una sola llamada
+    public async Task BroadcastTimerUpdates(List<TimerUpdateDto> updates)
+    {
+        // Un solo mensaje con todas las actualizaciones
+        await Clients.All.BatchUpdateTimers(updates);
+    }
+
+    // Enviar solo a un agente especifico (por connection ID)
+    public async Task LockComputer(string connectionId)
+    {
+        await Clients.Client(connectionId).LockScreen();
+    }
+}
+
+// === Agente: reconexion automatica con backoff exponencial ===
+
+public class SignalRClientService : IAsyncDisposable
+{
+    private HubConnection _connection;
+
+    public async Task ConnectAsync()
+    {
+        _connection = new HubConnectionBuilder()
+            .WithUrl($"http://{_serverIp}:5000/cafehub")
+            .AddMessagePackProtocol(opt =>
+                opt.SerializerOptions = MessagePackSerializerOptions.Standard
+                    .WithCompression(MessagePackCompression.Lz4BlockArray))
+            .WithAutomaticReconnect(new RetryPolicy()) // Backoff exponencial
+            .Build();
+
+        _connection.Reconnecting += _ =>
+        {
+            // Mostrar "Reconectando..." en overlay del agente
+            _lockService.ShowReconnecting();
+            return Task.CompletedTask;
+        };
+
+        _connection.Reconnected += _ =>
+        {
+            // Re-registrar PC despues de reconexion
+            return _connection.InvokeAsync("Register", GetRegistrationInfo());
+        };
+
+        await _connection.StartAsync();
+    }
+
+    // Backoff: 0s, 2s, 5s, 10s, 30s, 60s (max)
+    private class RetryPolicy : IRetryPolicy
+    {
+        private static readonly TimeSpan[] _delays = {
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(60)
+        };
+
+        public TimeSpan? NextRetryDelay(RetryContext ctx) =>
+            ctx.PreviousRetryCount < _delays.Length
+                ? _delays[ctx.PreviousRetryCount]
+                : TimeSpan.FromSeconds(60);
+    }
+}
+```
+
+### 7.6 Startup Optimizado
+
+```csharp
+// === App.xaml.cs - Startup del servidor optimizado ===
+
+public partial class App : Application
+{
+    // 1. Registrar servicios en paralelo donde sea posible
+    private static IServiceProvider ConfigureServices()
+    {
+        var services = new ServiceCollection();
+
+        // Singleton: una sola instancia para toda la app
+        services.AddSingleton<ICacheService, CacheService>();
+        services.AddSingleton<INavigationService, NavigationService>();
+        services.AddSingleton<IThemeService, ThemeService>();
+        services.AddSingleton<INotificationService, NotificationService>();
+
+        // Scoped: nueva instancia por operacion
+        services.AddDbContext<AppDbContext>(ServiceLifetime.Transient);
+
+        // Transient: nueva instancia cada vez (ViewModels ligeros)
+        services.AddTransient<DashboardViewModel>();
+        services.AddTransient<ComputerMapViewModel>();
+
+        // MemoryCache con limites
+        services.AddMemoryCache(options =>
+        {
+            options.SizeLimit = 1024;                           // Max 1024 items
+            options.CompactionPercentage = 0.25;                // Compactar 25% al llegar al limite
+            options.ExpirationScanFrequency = TimeSpan.FromMinutes(1);
+        });
+
+        // Serilog: logging asincrono (no bloquea UI)
+        services.AddLogging(builder =>
+        {
+            builder.AddSerilog(new LoggerConfiguration()
+                .MinimumLevel.Information()
+                .WriteTo.Async(a => a.File(
+                    path: "logs/desktopcafe-.log",
+                    rollingInterval: RollingInterval.Day,
+                    retainedFileCountLimit: 30,
+                    buffered: true,                            // Buffered para rendimiento
+                    flushToDiskInterval: TimeSpan.FromSeconds(5)))
+                .CreateLogger());
+        });
+
+        return services.BuildServiceProvider();
+    }
+
+    // 2. Precarga de datos criticos en background (no bloquea UI)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
+    {
+        MainWindow = new MainWindow();
+        MainWindow.Activate();
+
+        // Precargar datos en paralelo DESPUES de mostrar la ventana
+        _ = Task.Run(async () =>
+        {
+            var cache = Services.GetRequiredService<ICacheService>();
+            await Task.WhenAll(
+                cache.GetRatesAsync(),           // Tarifas
+                cache.GetActiveProductsAsync(),   // Productos POS
+                cache.GetDashboardAsync()         // KPIs
+            );
+        });
+    }
+}
+```
+
+```xml
+<!-- === .csproj - Compilacion optimizada === -->
+<PropertyGroup>
+    <TargetFramework>net9.0-windows10.0.22621.0</TargetFramework>
+    <PublishReadyToRun>true</PublishReadyToRun>         <!-- Pre-compilar JIT = startup rapido -->
+    <PublishTrimmed>false</PublishTrimmed>               <!-- No trimming (WinUI 3 no compatible aun) -->
+    <TieredCompilation>true</TieredCompilation>         <!-- JIT progresivo -->
+    <TieredPGO>true</TieredPGO>                         <!-- Profile-Guided Optimization -->
+    <ServerGarbageCollection>true</ServerGarbageCollection> <!-- GC optimizado -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+</PropertyGroup>
+```
+
+### 7.7 Memoria - Reduccion de Allocations
+
+```csharp
+// === Usar Span<T> y stackalloc para operaciones frecuentes ===
+
+// Generar codigo de cliente (6 caracteres alfanumericos)
+// ANTES: string.Concat + new char[] + allocations
+// DESPUES: stackalloc, cero allocations en heap
+public static string GenerateClientCode()
+{
+    const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    Span<char> buffer = stackalloc char[6];
+
+    for (int i = 0; i < buffer.Length; i++)
+        buffer[i] = chars[Random.Shared.Next(chars.Length)];
+
+    return new string(buffer);
+}
+
+// === Generar codigo de voucher WiFi (8 caracteres) ===
+public static string GenerateVoucherCode()
+{
+    Span<char> buffer = stackalloc char[8];
+    const string chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // Sin 0,O,1,I,L
+
+    for (int i = 0; i < buffer.Length; i++)
+        buffer[i] = chars[Random.Shared.Next(chars.Length)];
+
+    return new string(buffer);
+}
+
+// === Reutilizar StringBuilder para formateo de recibos ===
+public class ReceiptBuilder : IDisposable
+{
+    private static readonly ObjectPool<StringBuilder> _pool =
+        new DefaultObjectPoolProvider().CreateStringBuilderPool(
+            initialCapacity: 512, maximumRetainedCapacity: 4096);
+
+    private readonly StringBuilder _sb;
+
+    public ReceiptBuilder() => _sb = _pool.Get();
+
+    public ReceiptBuilder AddHeader(string cafeName)
+    {
+        _sb.AppendLine("================================");
+        _sb.AppendLine($"  {cafeName}");
+        _sb.AppendLine("================================");
+        return this;
+    }
+
+    public ReceiptBuilder AddItem(string name, int qty, decimal price)
+    {
+        _sb.AppendLine($"  {name,-20} {qty}x  ${price:F2}");
+        return this;
+    }
+
+    public string Build() => _sb.ToString();
+    public void Dispose() => _pool.Return(_sb);
+}
+```
+
+### 7.8 Base de Datos - Bulk Operations y Reportes
+
+```csharp
+// === Reportes optimizados: una sola query SQL para el reporte completo ===
+
+public class ReportRepository : IReportRepository
+{
+    // Reporte diario: UNA query que trae todo (no N+1 queries)
+    public async Task<DailyReportDto> GetDailyReportAsync(DateTime date)
+    {
+        var nextDay = date.AddDays(1);
+
+        // Ejecutar todas las consultas en paralelo (SQLite WAL permite lecturas concurrentes)
+        var revenueTask = _db.Database.SqlQueryRaw<RevenueBreakdown>(@"
+            SELECT
+                COALESCE(SUM(CASE WHEN s.SessionType IS NOT NULL THEN s.TotalCharge END), 0) as SessionRevenue,
+                COALESCE(SUM(CASE WHEN sl.Id IS NOT NULL THEN sl.Total END), 0) as SalesRevenue,
+                COALESCE(SUM(CASE WHEN pj.Id IS NOT NULL THEN pj.Cost END), 0) as PrintRevenue
+            FROM Sessions s
+            LEFT JOIN Sales sl ON sl.CreatedAt >= @p0 AND sl.CreatedAt < @p1
+            LEFT JOIN PrintJobs pj ON pj.CreatedAt >= @p0 AND pj.CreatedAt < @p1
+            WHERE s.CreatedAt >= @p0 AND s.CreatedAt < @p1",
+            date, nextDay).FirstOrDefaultAsync();
+
+        var hourlyTask = _db.Database.SqlQueryRaw<HourlyUsage>(@"
+            SELECT
+                CAST(strftime('%H', StartTime) AS INTEGER) as Hour,
+                COUNT(*) as SessionCount,
+                ROUND(AVG(julianday(COALESCE(EndTime, datetime('now'))) - julianday(StartTime)) * 24 * 60, 0) as AvgMinutes
+            FROM Sessions
+            WHERE CreatedAt >= @p0 AND CreatedAt < @p1
+            GROUP BY CAST(strftime('%H', StartTime) AS INTEGER)
+            ORDER BY Hour",
+            date, nextDay).ToListAsync();
+
+        var topProductsTask = _db.Database.SqlQueryRaw<TopProduct>(@"
+            SELECT p.Name, SUM(si.Quantity) as TotalQty, SUM(si.Subtotal) as TotalRevenue
+            FROM SaleItems si
+            JOIN Products p ON p.Id = si.ProductId
+            JOIN Sales s ON s.Id = si.SaleId
+            WHERE s.CreatedAt >= @p0 AND s.CreatedAt < @p1
+            GROUP BY p.Id
+            ORDER BY TotalRevenue DESC
+            LIMIT 10",
+            date, nextDay).ToListAsync();
+
+        // Esperar todas en paralelo
+        await Task.WhenAll(revenueTask, hourlyTask, topProductsTask);
+
+        return new DailyReportDto
+        {
+            Revenue = await revenueTask,
+            HourlyUsage = await hourlyTask,
+            TopProducts = await topProductsTask
+        };
+    }
+}
+
+// === Cleanup automatico de datos antiguos (no dejar crecer la BD infinitamente) ===
+
+public class MaintenanceService : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromHours(24), ct); // Ejecutar cada 24 horas
+
+            using var db = _factory.CreateDbContext();
+
+            // Eliminar logs de auditoria > 90 dias
+            var cutoff = DateTime.Now.AddDays(-90);
+            await db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM AuditLogs WHERE CreatedAt < @p0", cutoff);
+
+            // Eliminar vouchers WiFi expirados > 30 dias
+            var voucherCutoff = DateTime.Now.AddDays(-30);
+            await db.Database.ExecuteSqlRawAsync(
+                "DELETE FROM WiFiVouchers WHERE ExpiresAt < @p0", voucherCutoff);
+
+            // Optimizar base de datos
+            await db.Database.ExecuteSqlRawAsync("PRAGMA incremental_vacuum;");
+            await db.Database.ExecuteSqlRawAsync("PRAGMA optimize;");
+
+            _logger.LogInformation("Mantenimiento de BD completado");
+        }
+    }
+}
+```
+
+### 7.9 Backup Incremental Automatico
+
+```csharp
+// === BackupService.cs - Backup sin bloquear la aplicacion ===
+
+public class BackupService : BackgroundService
+{
+    private readonly string _backupDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Desktopcafe", "Backups");
+
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        Directory.CreateDirectory(_backupDir);
+
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromHours(6), ct); // Cada 6 horas
+
+            try
+            {
+                var backupFile = Path.Combine(_backupDir,
+                    $"desktopcafe_{DateTime.Now:yyyyMMdd_HHmmss}.db");
+
+                // SQLite Online Backup API: copia sin bloquear lecturas/escrituras
+                using var source = new SqliteConnection("Data Source=desktopcafe.db");
+                using var backup = new SqliteConnection($"Data Source={backupFile}");
+                await source.OpenAsync(ct);
+                await backup.OpenAsync(ct);
+                source.BackupDatabase(backup);
+
+                // Limpiar backups antiguos (mantener 7 dias)
+                CleanOldBackups(maxAgeDays: 7);
+
+                _logger.LogInformation("Backup creado: {File}", backupFile);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error en backup automatico");
+            }
+        }
+    }
+
+    private void CleanOldBackups(int maxAgeDays)
+    {
+        var cutoff = DateTime.Now.AddDays(-maxAgeDays);
+        foreach (var file in Directory.GetFiles(_backupDir, "*.db"))
+        {
+            if (File.GetCreationTime(file) < cutoff)
+                File.Delete(file);
+        }
+    }
+}
+```
+
+### 7.10 Profiling y Monitoreo en Produccion
+
+```csharp
+// === PerformanceMonitor.cs - Metricas internas del servidor ===
+
+public class PerformanceMonitor
+{
+    private static readonly Stopwatch _uptime = Stopwatch.StartNew();
+
+    // Metricas visibles en Settings > Diagnosticos
+    public ServerMetrics GetMetrics() => new()
+    {
+        Uptime = _uptime.Elapsed,
+        MemoryUsageMB = Process.GetCurrentProcess().WorkingSet64 / 1024 / 1024,
+        ThreadCount = Process.GetCurrentProcess().Threads.Count,
+        GCGen0Collections = GC.CollectionCount(0),
+        GCGen1Collections = GC.CollectionCount(1),
+        GCGen2Collections = GC.CollectionCount(2),
+        GCTotalMemory = GC.GetTotalMemory(false) / 1024 / 1024,
+        ConnectedAgents = _signalRService.ConnectedCount,
+        ActiveSessions = _sessionService.ActiveCount,
+        DbSizeMB = new FileInfo("desktopcafe.db").Length / 1024 / 1024,
+        CacheHitRate = _cacheService.HitRate
+    };
+}
+
+// Visible en la pagina de Settings:
+// ┌──────────────────────────────────────────────────┐
+// │  Diagnosticos del Sistema                         │
+// │                                                    │
+// │  Uptime:           12h 34m 56s                    │
+// │  Memoria:          87 MB / 150 MB target          │
+// │  Hilos activos:    12                              │
+// │  Agentes online:   15/15                           │
+// │  Sesiones activas: 8                               │
+// │  BD:               45 MB                           │
+// │  Cache hit rate:   94.2%                           │
+// │  GC Gen0/1/2:      234 / 45 / 3                   │
+// │                                                    │
+// │  [Forzar GC]  [Exportar logs]  [Backup ahora]    │
+// └──────────────────────────────────────────────────┘
+```
 
 ---
 
