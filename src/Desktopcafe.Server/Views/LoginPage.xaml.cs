@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -57,6 +58,7 @@ public sealed partial class LoginPage : UserControl
         }
         catch (Exception ex)
         {
+            Log.Error(ex, "Login failed for user {Username}", username);
             ShowError($"Error de conexion: {ex.Message}");
         }
         finally

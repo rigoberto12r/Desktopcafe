@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -26,20 +27,30 @@ public sealed partial class EmployeesPage : Page
     private async Task LoadEmployeesAsync()
     {
         _isLoading = true;
-        using var db = new AppDbContext();
-        var employees = await db.Employees.OrderBy(e => e.Name).ToListAsync();
-
-        EmployeeList.ItemsSource = employees.Select(emp => new
+        try
         {
-            emp.Id,
-            emp.Name,
-            emp.Username,
-            RoleText = emp.Role == UserRole.Admin ? "Administrador" : "Cajero",
-            emp.IsActive,
-            StatusText = emp.IsActive ? "Activo" : "Inactivo",
-            StatusColor = emp.IsActive ? "Green" : "Gray"
-        }).ToList();
-        _isLoading = false;
+            using var db = new AppDbContext();
+            var employees = await db.Employees.OrderBy(e => e.Name).ToListAsync();
+
+            EmployeeList.ItemsSource = employees.Select(emp => new
+            {
+                emp.Id,
+                emp.Name,
+                emp.Username,
+                RoleText = emp.Role == UserRole.Admin ? "Administrador" : "Cajero",
+                emp.IsActive,
+                StatusText = emp.IsActive ? "Activo" : "Inactivo",
+                StatusColor = emp.IsActive ? "Green" : "Gray"
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load employees");
+        }
+        finally
+        {
+            _isLoading = false;
+        }
     }
 
     private async void AddEmployee_Click(object sender, RoutedEventArgs e)
@@ -77,18 +88,32 @@ public sealed partial class EmployeesPage : Page
             var password = passwordBox.Password;
             if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password)) return;
 
-            var employee = new Employee
+            try
             {
-                Name = name,
-                Username = username,
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
-                Role = roleCombo.SelectedIndex == 1 ? UserRole.Admin : UserRole.Cashier
-            };
+                var employee = new Employee
+                {
+                    Name = name,
+                    Username = username,
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword(password),
+                    Role = roleCombo.SelectedIndex == 1 ? UserRole.Admin : UserRole.Cashier
+                };
 
-            using var db = new AppDbContext();
-            await db.Employees.AddAsync(employee);
-            await db.SaveChangesAsync();
-            await LoadEmployeesAsync();
+                using var db = new AppDbContext();
+                await db.Employees.AddAsync(employee);
+                await db.SaveChangesAsync();
+                await LoadEmployeesAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to add employee {Name}", name);
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "No se pudo agregar el empleado.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 
@@ -97,12 +122,19 @@ public sealed partial class EmployeesPage : Page
         if (_isLoading) return;
         if (sender is not ToggleSwitch toggle || toggle.Tag is not int employeeId) return;
 
-        using var db = new AppDbContext();
-        var employee = await db.Employees.FindAsync(employeeId);
-        if (employee == null) return;
+        try
+        {
+            using var db = new AppDbContext();
+            var employee = await db.Employees.FindAsync(employeeId);
+            if (employee == null) return;
 
-        employee.IsActive = toggle.IsOn;
-        db.Entry(employee).State = EntityState.Modified;
-        await db.SaveChangesAsync();
+            employee.IsActive = toggle.IsOn;
+            db.Entry(employee).State = EntityState.Modified;
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to toggle active status for employee {EmployeeId}", employeeId);
+        }
     }
 }

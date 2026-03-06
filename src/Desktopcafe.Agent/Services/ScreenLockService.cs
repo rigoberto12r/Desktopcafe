@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace Desktopcafe.Agent.Services;
 
 public class ScreenLockService
@@ -9,13 +11,27 @@ public class ScreenLockService
 
     public void Lock()
     {
-        IsLocked = true;
-        LockRequested?.Invoke();
+        try
+        {
+            IsLocked = true;
+            LockRequested?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to execute lock operation");
+        }
     }
 
     public void Unlock()
     {
-        IsLocked = false;
-        UnlockRequested?.Invoke();
+        try
+        {
+            IsLocked = false;
+            UnlockRequested?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to execute unlock operation");
+        }
     }
 }

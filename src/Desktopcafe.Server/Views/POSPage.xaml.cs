@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -25,9 +26,16 @@ public sealed partial class POSPage : Page
 
     private async Task LoadProductsAsync()
     {
-        using var db = new AppDbContext();
-        _allProducts = await db.Products.Where(p => p.IsActive).OrderBy(p => p.Name).ToListAsync();
-        ApplyFilters();
+        try
+        {
+            using var db = new AppDbContext();
+            _allProducts = await db.Products.Where(p => p.IsActive).OrderBy(p => p.Name).ToListAsync();
+            ApplyFilters();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load products for POS");
+        }
     }
 
     private void ApplyFilters()
@@ -117,40 +125,54 @@ public sealed partial class POSPage : Page
 
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
-            using var db = new AppDbContext();
-            var sale = new Sale
+            try
             {
-                EmployeeId = App.CurrentEmployeeId,
-                Total = total,
-                PaymentMethod = (PaymentMethod)payCombo.SelectedIndex,
-                AmountPaid = (decimal)amountBox.Value,
-                Change = (decimal)amountBox.Value - total
-            };
-
-            foreach (var item in _cart)
-            {
-                sale.Items.Add(new SaleItem
+                using var db = new AppDbContext();
+                var sale = new Sale
                 {
-                    ProductId = item.ProductId,
-                    Quantity = item.Quantity,
-                    UnitPrice = item.UnitPrice,
-                    Subtotal = item.Subtotal
-                });
+                    EmployeeId = App.CurrentEmployeeId,
+                    Total = total,
+                    PaymentMethod = (PaymentMethod)payCombo.SelectedIndex,
+                    AmountPaid = (decimal)amountBox.Value,
+                    Change = (decimal)amountBox.Value - total
+                };
 
-                var product = await db.Products.FindAsync(item.ProductId);
-                if (product != null)
+                foreach (var item in _cart)
                 {
-                    product.Stock -= item.Quantity;
-                    db.Entry(product).State = EntityState.Modified;
+                    sale.Items.Add(new SaleItem
+                    {
+                        ProductId = item.ProductId,
+                        Quantity = item.Quantity,
+                        UnitPrice = item.UnitPrice,
+                        Subtotal = item.Subtotal
+                    });
+
+                    var product = await db.Products.FindAsync(item.ProductId);
+                    if (product != null)
+                    {
+                        product.Stock -= item.Quantity;
+                        db.Entry(product).State = EntityState.Modified;
+                    }
                 }
+
+                await db.Sales.AddAsync(sale);
+                await db.SaveChangesAsync();
+
+                _cart.Clear();
+                RefreshCart();
+                await LoadProductsAsync();
             }
-
-            await db.Sales.AddAsync(sale);
-            await db.SaveChangesAsync();
-
-            _cart.Clear();
-            RefreshCart();
-            await LoadProductsAsync();
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to process sale with {ItemCount} items, total {Total}", _cart.Count, total);
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "Error al procesar la venta.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 

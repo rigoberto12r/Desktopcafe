@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Desktopcafe.Shared;
+using Serilog;
 
 namespace Desktopcafe.Server.Services;
 
@@ -66,24 +67,31 @@ public class SessionTimerService : IDisposable
     {
         foreach (var kvp in _sessions)
         {
-            var session = kvp.Value;
-            if (session.IsPaused) continue;
-
-            session.TimeRemaining -= TimeSpan.FromSeconds(1);
-
-            if (session.TimeRemaining <= TimeSpan.Zero)
+            try
             {
-                session.TimeRemaining = TimeSpan.Zero;
-                _sessions.TryRemove(kvp.Key, out _);
-                SessionExpired?.Invoke(this, new SessionExpiredEventArgs
-                {
-                    SessionId = session.SessionId,
-                    MacAddress = session.MacAddress
-                });
-                continue;
-            }
+                var session = kvp.Value;
+                if (session.IsPaused) continue;
 
-            CheckWarnings(session);
+                session.TimeRemaining -= TimeSpan.FromSeconds(1);
+
+                if (session.TimeRemaining <= TimeSpan.Zero)
+                {
+                    session.TimeRemaining = TimeSpan.Zero;
+                    _sessions.TryRemove(kvp.Key, out _);
+                    SessionExpired?.Invoke(this, new SessionExpiredEventArgs
+                    {
+                        SessionId = session.SessionId,
+                        MacAddress = session.MacAddress
+                    });
+                    continue;
+                }
+
+                CheckWarnings(session);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to process timer tick for session {SessionId}", kvp.Key);
+            }
         }
     }
 

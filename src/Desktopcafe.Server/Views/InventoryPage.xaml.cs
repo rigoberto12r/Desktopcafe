@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -24,21 +25,28 @@ public sealed partial class InventoryPage : Page
 
     private async Task LoadProductsAsync()
     {
-        using var db = new AppDbContext();
-        _allProducts = await db.Products.Where(p => p.IsActive).OrderBy(p => p.Name).ToListAsync();
-
-        var lowStock = _allProducts.Where(p => p.Stock <= p.MinStock).ToList();
-        if (lowStock.Any())
+        try
         {
-            LowStockAlert.IsOpen = true;
-            LowStockAlert.Message = $"{lowStock.Count} producto(s) con stock bajo: {string.Join(", ", lowStock.Select(p => p.Name))}";
-        }
-        else
-        {
-            LowStockAlert.IsOpen = false;
-        }
+            using var db = new AppDbContext();
+            _allProducts = await db.Products.Where(p => p.IsActive).OrderBy(p => p.Name).ToListAsync();
 
-        ApplyFilter();
+            var lowStock = _allProducts.Where(p => p.Stock <= p.MinStock).ToList();
+            if (lowStock.Any())
+            {
+                LowStockAlert.IsOpen = true;
+                LowStockAlert.Message = $"{lowStock.Count} producto(s) con stock bajo: {string.Join(", ", lowStock.Select(p => p.Name))}";
+            }
+            else
+            {
+                LowStockAlert.IsOpen = false;
+            }
+
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load inventory products");
+        }
     }
 
     private void ApplyFilter()
@@ -110,10 +118,24 @@ public sealed partial class InventoryPage : Page
                 MinStock = (int)minStockBox.Value
             };
 
-            using var db = new AppDbContext();
-            await db.Products.AddAsync(product);
-            await db.SaveChangesAsync();
-            await LoadProductsAsync();
+            try
+            {
+                using var db = new AppDbContext();
+                await db.Products.AddAsync(product);
+                await db.SaveChangesAsync();
+                await LoadProductsAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to add product {ProductName}", name);
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "Error al agregar el producto.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 
@@ -121,54 +143,68 @@ public sealed partial class InventoryPage : Page
     {
         if (sender is not Button btn || btn.Tag is not int productId) return;
 
-        using var db = new AppDbContext();
-        var product = await db.Products.FindAsync(productId);
-        if (product == null) return;
-
-        var nameBox = new TextBox { Header = "Nombre", Text = product.Name };
-        var categoryCombo = new ComboBox
+        try
         {
-            Header = "Categoria",
-            ItemsSource = new[] { "Bebidas", "Snacks", "Papeleria", "Otros" },
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-        categoryCombo.SelectedItem = product.Category;
-        if (categoryCombo.SelectedIndex < 0) categoryCombo.SelectedIndex = 3;
+            using var db = new AppDbContext();
+            var product = await db.Products.FindAsync(productId);
+            if (product == null) return;
 
-        var priceBox = new NumberBox { Header = "Precio", Minimum = 0, Value = (double)product.Price, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-        var costBox = new NumberBox { Header = "Costo", Minimum = 0, Value = (double)product.Cost, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
-        var minStockBox = new NumberBox { Header = "Stock Minimo", Minimum = 0, Value = product.MinStock, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+            var nameBox = new TextBox { Header = "Nombre", Text = product.Name };
+            var categoryCombo = new ComboBox
+            {
+                Header = "Categoria",
+                ItemsSource = new[] { "Bebidas", "Snacks", "Papeleria", "Otros" },
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            categoryCombo.SelectedItem = product.Category;
+            if (categoryCombo.SelectedIndex < 0) categoryCombo.SelectedIndex = 3;
 
-        var panel = new StackPanel { Spacing = 12, MinWidth = 350 };
-        panel.Children.Add(nameBox);
-        panel.Children.Add(categoryCombo);
-        panel.Children.Add(priceBox);
-        panel.Children.Add(costBox);
-        panel.Children.Add(minStockBox);
+            var priceBox = new NumberBox { Header = "Precio", Minimum = 0, Value = (double)product.Price, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+            var costBox = new NumberBox { Header = "Costo", Minimum = 0, Value = (double)product.Cost, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
+            var minStockBox = new NumberBox { Header = "Stock Minimo", Minimum = 0, Value = product.MinStock, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
 
-        var dialog = new ContentDialog
+            var panel = new StackPanel { Spacing = 12, MinWidth = 350 };
+            panel.Children.Add(nameBox);
+            panel.Children.Add(categoryCombo);
+            panel.Children.Add(priceBox);
+            panel.Children.Add(costBox);
+            panel.Children.Add(minStockBox);
+
+            var dialog = new ContentDialog
+            {
+                Title = "Editar Producto",
+                Content = panel,
+                PrimaryButtonText = "Guardar",
+                CloseButtonText = "Cancelar",
+                XamlRoot = XamlRoot
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                var name = nameBox.Text?.Trim();
+                if (string.IsNullOrEmpty(name)) return;
+
+                product.Name = name;
+                product.Category = categoryCombo.SelectedItem?.ToString() ?? "Otros";
+                product.Price = (decimal)priceBox.Value;
+                product.Cost = (decimal)costBox.Value;
+                product.MinStock = (int)minStockBox.Value;
+
+                db.Entry(product).State = EntityState.Modified;
+                await db.SaveChangesAsync();
+                await LoadProductsAsync();
+            }
+        }
+        catch (Exception ex)
         {
-            Title = "Editar Producto",
-            Content = panel,
-            PrimaryButtonText = "Guardar",
-            CloseButtonText = "Cancelar",
-            XamlRoot = XamlRoot
-        };
-
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-        {
-            var name = nameBox.Text?.Trim();
-            if (string.IsNullOrEmpty(name)) return;
-
-            product.Name = name;
-            product.Category = categoryCombo.SelectedItem?.ToString() ?? "Otros";
-            product.Price = (decimal)priceBox.Value;
-            product.Cost = (decimal)costBox.Value;
-            product.MinStock = (int)minStockBox.Value;
-
-            db.Entry(product).State = EntityState.Modified;
-            await db.SaveChangesAsync();
-            await LoadProductsAsync();
+            Log.Error(ex, "Failed to edit product {ProductId}", productId);
+            await new ContentDialog
+            {
+                Title = "Error",
+                Content = "Error al editar el producto.",
+                CloseButtonText = "Aceptar",
+                XamlRoot = XamlRoot
+            }.ShowAsync();
         }
     }
 
@@ -176,37 +212,51 @@ public sealed partial class InventoryPage : Page
     {
         if (sender is not Button btn || btn.Tag is not int productId) return;
 
-        using var db = new AppDbContext();
-        var product = await db.Products.FindAsync(productId);
-        if (product == null) return;
-
-        var quantityBox = new NumberBox
+        try
         {
-            Header = $"Stock actual: {product.Stock}",
-            PlaceholderText = "Cantidad a agregar",
-            Minimum = 1,
-            Value = 1,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact
-        };
+            using var db = new AppDbContext();
+            var product = await db.Products.FindAsync(productId);
+            if (product == null) return;
 
-        var dialog = new ContentDialog
+            var quantityBox = new NumberBox
+            {
+                Header = $"Stock actual: {product.Stock}",
+                PlaceholderText = "Cantidad a agregar",
+                Minimum = 1,
+                Value = 1,
+                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact
+            };
+
+            var dialog = new ContentDialog
+            {
+                Title = $"Agregar Stock - {product.Name}",
+                Content = quantityBox,
+                PrimaryButtonText = "Agregar",
+                CloseButtonText = "Cancelar",
+                XamlRoot = XamlRoot
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                var qty = (int)quantityBox.Value;
+                if (qty <= 0) return;
+
+                product.Stock += qty;
+                db.Entry(product).State = EntityState.Modified;
+                await db.SaveChangesAsync();
+                await LoadProductsAsync();
+            }
+        }
+        catch (Exception ex)
         {
-            Title = $"Agregar Stock - {product.Name}",
-            Content = quantityBox,
-            PrimaryButtonText = "Agregar",
-            CloseButtonText = "Cancelar",
-            XamlRoot = XamlRoot
-        };
-
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-        {
-            var qty = (int)quantityBox.Value;
-            if (qty <= 0) return;
-
-            product.Stock += qty;
-            db.Entry(product).State = EntityState.Modified;
-            await db.SaveChangesAsync();
-            await LoadProductsAsync();
+            Log.Error(ex, "Failed to add stock for product {ProductId}", productId);
+            await new ContentDialog
+            {
+                Title = "Error",
+                Content = "Error al agregar stock.",
+                CloseButtonText = "Aceptar",
+                XamlRoot = XamlRoot
+            }.ShowAsync();
         }
     }
 }

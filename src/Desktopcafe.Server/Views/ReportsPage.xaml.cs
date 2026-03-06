@@ -3,6 +3,7 @@ using Desktopcafe.Data.Repositories;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -57,7 +58,7 @@ public sealed partial class ReportsPage : Page
                 SessionsText = $"{h.SessionCount} sesiones"
             }).ToList();
         }
-        catch { /* Will show default values */ }
+        catch (Exception ex) { Log.Error(ex, "Failed to load report for {Date}", date); }
     }
 
     private async void ExportPdf_Click(object sender, RoutedEventArgs e)

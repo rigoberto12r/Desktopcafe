@@ -32,23 +32,31 @@ public class SignalRClientService : IAsyncDisposable
 
     public async Task ConnectAsync(string? serverIp = null)
     {
-        if (serverIp != null) _serverIp = serverIp;
+        try
+        {
+            if (serverIp != null) _serverIp = serverIp;
 
-        _connection = new HubConnectionBuilder()
-            .WithUrl($"http://{_serverIp}:{Constants.ServerPort}{Constants.HubPath}")
-            .AddMessagePackProtocol()
-            .WithAutomaticReconnect(new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60) })
-            .Build();
+            _connection = new HubConnectionBuilder()
+                .WithUrl($"http://{_serverIp}:{Constants.ServerPort}{Constants.HubPath}")
+                .AddMessagePackProtocol()
+                .WithAutomaticReconnect(new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60) })
+                .Build();
 
-        RegisterHandlers();
+            RegisterHandlers();
 
-        _connection.Reconnecting += _ => { Log.Information("Reconnecting to server..."); return Task.CompletedTask; };
-        _connection.Reconnected += _ => RegisterWithServerAsync();
-        _connection.Closed += _ => { Log.Warning("Connection closed"); return Task.CompletedTask; };
+            _connection.Reconnecting += _ => { Log.Information("Reconnecting to server..."); return Task.CompletedTask; };
+            _connection.Reconnected += _ => RegisterWithServerAsync();
+            _connection.Closed += _ => { Log.Warning("Connection closed"); return Task.CompletedTask; };
 
-        await _connection.StartAsync();
-        await RegisterWithServerAsync();
-        _ = HeartbeatLoopAsync(_cts.Token);
+            await _connection.StartAsync();
+            await RegisterWithServerAsync();
+            _ = HeartbeatLoopAsync(_cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to connect to server at {ServerIp}", _serverIp);
+            throw;
+        }
     }
 
     private void RegisterHandlers()
@@ -103,17 +111,24 @@ public class SignalRClientService : IAsyncDisposable
 
     private async Task RegisterWithServerAsync()
     {
-        if (_connection?.State != HubConnectionState.Connected) return;
+        try
+        {
+            if (_connection?.State != HubConnectionState.Connected) return;
 
-        var mac = GetMacAddress();
-        var registration = new ComputerRegistrationDto(
-            Name: Environment.MachineName,
-            IpAddress: _hwInfo.GetLocalIpAddress(),
-            MacAddress: mac,
-            Specs: _hwInfo.GetSystemSpecs());
+            var mac = GetMacAddress();
+            var registration = new ComputerRegistrationDto(
+                Name: Environment.MachineName,
+                IpAddress: _hwInfo.GetLocalIpAddress(),
+                MacAddress: mac,
+                Specs: _hwInfo.GetSystemSpecs());
 
-        await _connection.InvokeAsync("Register", registration);
-        Log.Information("Registered with server as {Name}", Environment.MachineName);
+            await _connection.InvokeAsync("Register", registration);
+            Log.Information("Registered with server as {Name}", Environment.MachineName);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to register with server");
+        }
     }
 
     private async Task HeartbeatLoopAsync(CancellationToken ct)
@@ -141,17 +156,31 @@ public class SignalRClientService : IAsyncDisposable
 
     public async Task RequestExtensionAsync()
     {
-        if (_connection?.State == HubConnectionState.Connected)
+        try
         {
-            await _connection.InvokeAsync("SessionRequest", new SessionRequestDto(GetMacAddress(), null));
+            if (_connection?.State == HubConnectionState.Connected)
+            {
+                await _connection.InvokeAsync("SessionRequest", new SessionRequestDto(GetMacAddress(), null));
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to request session extension");
         }
     }
 
     public async Task AlertAdminAsync(string title, string message)
     {
-        if (_connection?.State == HubConnectionState.Connected)
+        try
         {
-            await _connection.InvokeAsync("AlertAdmin", new AlertDto(GetMacAddress(), title, message, "Warning"));
+            if (_connection?.State == HubConnectionState.Connected)
+            {
+                await _connection.InvokeAsync("AlertAdmin", new AlertDto(GetMacAddress(), title, message, "Warning"));
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to alert admin");
         }
     }
 

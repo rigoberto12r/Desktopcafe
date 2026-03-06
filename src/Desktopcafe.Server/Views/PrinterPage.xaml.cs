@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -23,20 +24,27 @@ public sealed partial class PrinterPage : Page
 
     private async Task LoadJobsAsync()
     {
-        using var db = new AppDbContext();
-        var today = DateTime.Today;
+        try
+        {
+            using var db = new AppDbContext();
+            var today = DateTime.Today;
 
-        var jobs = await db.PrintJobs
-            .Include(j => j.Computer)
-            .Where(j => j.CreatedAt >= today)
-            .OrderByDescending(j => j.CreatedAt)
-            .ToListAsync();
+            var jobs = await db.PrintJobs
+                .Include(j => j.Computer)
+                .Where(j => j.CreatedAt >= today)
+                .OrderByDescending(j => j.CreatedAt)
+                .ToListAsync();
 
-        var pending = jobs.Where(j => j.Status == PrintJobStatus.Pending).Select(MapJob).ToList();
-        var completed = jobs.Where(j => j.Status != PrintJobStatus.Pending).Select(MapJob).ToList();
+            var pending = jobs.Where(j => j.Status == PrintJobStatus.Pending).Select(MapJob).ToList();
+            var completed = jobs.Where(j => j.Status != PrintJobStatus.Pending).Select(MapJob).ToList();
 
-        PendingList.ItemsSource = pending;
-        CompletedList.ItemsSource = completed;
+            PendingList.ItemsSource = pending;
+            CompletedList.ItemsSource = completed;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load print jobs");
+        }
     }
 
     private static object MapJob(PrintJob j) => new
@@ -72,14 +80,21 @@ public sealed partial class PrinterPage : Page
 
     private async Task UpdateJobStatusAsync(int jobId, PrintJobStatus status)
     {
-        using var db = new AppDbContext();
-        var job = await db.PrintJobs.FindAsync(jobId);
-        if (job == null) return;
+        try
+        {
+            using var db = new AppDbContext();
+            var job = await db.PrintJobs.FindAsync(jobId);
+            if (job == null) return;
 
-        job.Status = status;
-        db.Entry(job).State = EntityState.Modified;
-        await db.SaveChangesAsync();
-        await LoadJobsAsync();
+            job.Status = status;
+            db.Entry(job).State = EntityState.Modified;
+            await db.SaveChangesAsync();
+            await LoadJobsAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to update print job {JobId} to status {Status}", jobId, status);
+        }
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await LoadJobsAsync();

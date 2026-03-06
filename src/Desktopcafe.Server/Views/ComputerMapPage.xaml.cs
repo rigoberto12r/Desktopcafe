@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -22,68 +23,82 @@ public sealed partial class ComputerMapPage : Page
 
     private async Task LoadComputersAsync()
     {
-        using var db = new AppDbContext();
-        var computers = await db.Computers
-            .Include(c => c.Sessions.Where(s => s.Status == SessionStatus.Active))
-            .ThenInclude(s => s.Client)
-            .OrderBy(c => c.Name)
-            .ToListAsync();
-
-        var cards = computers.Select(c =>
+        try
         {
-            var session = c.Sessions.FirstOrDefault();
-            var remaining = session?.PlannedEnd != null ? session.PlannedEnd.Value - DateTime.Now : TimeSpan.Zero;
-            var progress = session?.PlannedEnd != null && session.StartTime != default
-                ? (1.0 - remaining.TotalSeconds / (session.PlannedEnd.Value - session.StartTime).TotalSeconds) * 100
-                : 0;
+            using var db = new AppDbContext();
+            var computers = await db.Computers
+                .Include(c => c.Sessions.Where(s => s.Status == SessionStatus.Active))
+                .ThenInclude(s => s.Client)
+                .OrderBy(c => c.Name)
+                .ToListAsync();
 
-            return new
+            var cards = computers.Select(c =>
             {
-                c.Id,
-                c.Name,
-                StatusText = c.Status switch
-                {
-                    ComputerStatus.Available => "Disponible",
-                    ComputerStatus.InUse => $"En uso",
-                    ComputerStatus.Maintenance => "Mantenimiento",
-                    _ => "Offline"
-                },
-                StatusColor = c.Status switch
-                {
-                    ComputerStatus.Available => App.Current.Resources["StatusAvailableBrush"],
-                    ComputerStatus.InUse => remaining.TotalMinutes <= 2
-                        ? App.Current.Resources["StatusErrorBrush"]
-                        : App.Current.Resources["StatusInUseBrush"],
-                    ComputerStatus.Maintenance => App.Current.Resources["StatusMaintenanceBrush"],
-                    _ => App.Current.Resources["StatusOfflineBrush"]
-                },
-                TimeRemainingText = session != null && remaining > TimeSpan.Zero
-                    ? remaining.ToString(remaining.TotalHours >= 1 ? @"h\:mm\:ss" : @"mm\:ss")
-                    : "",
-                ClientName = session?.Client?.Name ?? "",
-                HasActiveSession = session != null ? Visibility.Visible : Visibility.Collapsed,
-                Progress = Math.Clamp(progress, 0, 100)
-            };
-        }).ToList();
+                var session = c.Sessions.FirstOrDefault();
+                var remaining = session?.PlannedEnd != null ? session.PlannedEnd.Value - DateTime.Now : TimeSpan.Zero;
+                var progress = session?.PlannedEnd != null && session.StartTime != default
+                    ? (1.0 - remaining.TotalSeconds / (session.PlannedEnd.Value - session.StartTime).TotalSeconds) * 100
+                    : 0;
 
-        ComputerGrid.ItemsSource = cards;
+                return new
+                {
+                    c.Id,
+                    c.Name,
+                    StatusText = c.Status switch
+                    {
+                        ComputerStatus.Available => "Disponible",
+                        ComputerStatus.InUse => $"En uso",
+                        ComputerStatus.Maintenance => "Mantenimiento",
+                        _ => "Offline"
+                    },
+                    StatusColor = c.Status switch
+                    {
+                        ComputerStatus.Available => App.Current.Resources["StatusAvailableBrush"],
+                        ComputerStatus.InUse => remaining.TotalMinutes <= 2
+                            ? App.Current.Resources["StatusErrorBrush"]
+                            : App.Current.Resources["StatusInUseBrush"],
+                        ComputerStatus.Maintenance => App.Current.Resources["StatusMaintenanceBrush"],
+                        _ => App.Current.Resources["StatusOfflineBrush"]
+                    },
+                    TimeRemainingText = session != null && remaining > TimeSpan.Zero
+                        ? remaining.ToString(remaining.TotalHours >= 1 ? @"h\:mm\:ss" : @"mm\:ss")
+                        : "",
+                    ClientName = session?.Client?.Name ?? "",
+                    HasActiveSession = session != null ? Visibility.Visible : Visibility.Collapsed,
+                    Progress = Math.Clamp(progress, 0, 100)
+                };
+            }).ToList();
+
+            ComputerGrid.ItemsSource = cards;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load computers");
+        }
     }
 
     private async void ComputerGrid_ItemClick(object sender, ItemClickEventArgs e)
     {
-        // Open session dialog for selected computer
-        dynamic item = e.ClickedItem;
-        int id = item.Id;
-
-        var dialog = new ContentDialog
+        try
         {
-            Title = $"Computadora {item.Name}",
-            Content = $"Estado: {item.StatusText}",
-            PrimaryButtonText = "Nueva Sesion",
-            CloseButtonText = "Cerrar",
-            XamlRoot = this.XamlRoot
-        };
-        await dialog.ShowAsync();
+            // Open session dialog for selected computer
+            dynamic item = e.ClickedItem;
+            int id = item.Id;
+
+            var dialog = new ContentDialog
+            {
+                Title = $"Computadora {item.Name}",
+                Content = $"Estado: {item.StatusText}",
+                PrimaryButtonText = "Nueva Sesion",
+                CloseButtonText = "Cerrar",
+                XamlRoot = this.XamlRoot
+            };
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to show computer details dialog");
+        }
     }
 
     private async void AddComputer_Click(object sender, RoutedEventArgs e)
@@ -105,15 +120,29 @@ public sealed partial class ComputerMapPage : Page
 
         if (await dialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
         {
-            using var db = new AppDbContext();
-            db.Computers.Add(new Core.Models.Computer
+            try
             {
-                Name = nameBox.Text.Trim(),
-                IpAddress = ipBox.Text?.Trim() ?? "",
-                Status = ComputerStatus.Offline
-            });
-            await db.SaveChangesAsync();
-            await LoadComputersAsync();
+                using var db = new AppDbContext();
+                db.Computers.Add(new Core.Models.Computer
+                {
+                    Name = nameBox.Text.Trim(),
+                    IpAddress = ipBox.Text?.Trim() ?? "",
+                    Status = ComputerStatus.Offline
+                });
+                await db.SaveChangesAsync();
+                await LoadComputersAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to add computer {ComputerName}", nameBox.Text.Trim());
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "Error al agregar la computadora.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 

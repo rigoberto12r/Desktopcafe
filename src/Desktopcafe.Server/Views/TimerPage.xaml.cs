@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -83,7 +84,10 @@ public sealed partial class TimerPage : Page
 
             DispatcherQueue.TryEnqueue(() => SessionList.ItemsSource = items);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to refresh sessions");
+        }
     }
 
     private async void NewSession_Click(object sender, RoutedEventArgs e)
@@ -126,27 +130,41 @@ public sealed partial class TimerPage : Page
         if (await dialog.ShowAsync() == ContentDialogResult.Primary && pcCombo.SelectedIndex >= 0)
         {
             var pc = availablePCs[pcCombo.SelectedIndex];
-            var sessionType = (SessionType)typeCombo.SelectedIndex;
-            var duration = (int)durationBox.Value;
-            var rate = await db.RateConfigs.FirstOrDefaultAsync(r => r.IsDefault);
-            var ratePerHour = rate?.PricePerHour ?? 20m;
-
-            var session = new Core.Models.Session
+            try
             {
-                ComputerId = pc.Id,
-                EmployeeId = App.CurrentEmployeeId,
-                SessionType = sessionType,
-                RatePerHour = ratePerHour,
-                StartTime = DateTime.Now,
-                PlannedEnd = sessionType != SessionType.Free ? DateTime.Now.AddMinutes(duration) : null,
-                TotalCharge = sessionType == SessionType.Prepaid ? ratePerHour * duration / 60m : 0,
-                Status = SessionStatus.Active
-            };
+                var sessionType = (SessionType)typeCombo.SelectedIndex;
+                var duration = (int)durationBox.Value;
+                var rate = await db.RateConfigs.FirstOrDefaultAsync(r => r.IsDefault);
+                var ratePerHour = rate?.PricePerHour ?? 20m;
 
-            db.Sessions.Add(session);
-            pc.Status = ComputerStatus.InUse;
-            db.Entry(pc).State = EntityState.Modified;
-            await db.SaveChangesAsync();
+                var session = new Core.Models.Session
+                {
+                    ComputerId = pc.Id,
+                    EmployeeId = App.CurrentEmployeeId,
+                    SessionType = sessionType,
+                    RatePerHour = ratePerHour,
+                    StartTime = DateTime.Now,
+                    PlannedEnd = sessionType != SessionType.Free ? DateTime.Now.AddMinutes(duration) : null,
+                    TotalCharge = sessionType == SessionType.Prepaid ? ratePerHour * duration / 60m : 0,
+                    Status = SessionStatus.Active
+                };
+
+                db.Sessions.Add(session);
+                pc.Status = ComputerStatus.InUse;
+                db.Entry(pc).State = EntityState.Modified;
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to create session for computer {ComputerId}", pc.Id);
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "Error al crear la sesion.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 
@@ -166,14 +184,28 @@ public sealed partial class TimerPage : Page
 
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             {
-                using var db = new AppDbContext();
-                var session = await db.Sessions.FindAsync(sessionId);
-                if (session?.PlannedEnd != null)
+                try
                 {
-                    session.PlannedEnd = session.PlannedEnd.Value.AddMinutes((int)box.Value);
-                    session.TotalCharge += session.RatePerHour * (decimal)box.Value / 60m;
-                    db.Entry(session).State = EntityState.Modified;
-                    await db.SaveChangesAsync();
+                    using var db = new AppDbContext();
+                    var session = await db.Sessions.FindAsync(sessionId);
+                    if (session?.PlannedEnd != null)
+                    {
+                        session.PlannedEnd = session.PlannedEnd.Value.AddMinutes((int)box.Value);
+                        session.TotalCharge += session.RatePerHour * (decimal)box.Value / 60m;
+                        db.Entry(session).State = EntityState.Modified;
+                        await db.SaveChangesAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed to extend session {SessionId}", sessionId);
+                    await new ContentDialog
+                    {
+                        Title = "Error",
+                        Content = "Error al extender la sesion.",
+                        CloseButtonText = "Aceptar",
+                        XamlRoot = XamlRoot
+                    }.ShowAsync();
                 }
             }
         }
@@ -183,29 +215,43 @@ public sealed partial class TimerPage : Page
     {
         if (sender is Button btn && btn.Tag is int sessionId)
         {
-            using var db = new AppDbContext();
-            var session = await db.Sessions.FindAsync(sessionId);
-            if (session == null) return;
-
-            if (session.IsPaused)
+            try
             {
-                var pausedTime = DateTime.Now - (session.PausedAt ?? DateTime.Now);
-                session.PausedDuration += pausedTime;
-                if (session.PlannedEnd.HasValue)
-                    session.PlannedEnd = session.PlannedEnd.Value.Add(pausedTime);
-                session.IsPaused = false;
-                session.PausedAt = null;
-                session.Status = SessionStatus.Active;
-            }
-            else
-            {
-                session.IsPaused = true;
-                session.PausedAt = DateTime.Now;
-                session.Status = SessionStatus.Paused;
-            }
+                using var db = new AppDbContext();
+                var session = await db.Sessions.FindAsync(sessionId);
+                if (session == null) return;
 
-            db.Entry(session).State = EntityState.Modified;
-            await db.SaveChangesAsync();
+                if (session.IsPaused)
+                {
+                    var pausedTime = DateTime.Now - (session.PausedAt ?? DateTime.Now);
+                    session.PausedDuration += pausedTime;
+                    if (session.PlannedEnd.HasValue)
+                        session.PlannedEnd = session.PlannedEnd.Value.Add(pausedTime);
+                    session.IsPaused = false;
+                    session.PausedAt = null;
+                    session.Status = SessionStatus.Active;
+                }
+                else
+                {
+                    session.IsPaused = true;
+                    session.PausedAt = DateTime.Now;
+                    session.Status = SessionStatus.Paused;
+                }
+
+                db.Entry(session).State = EntityState.Modified;
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to pause/resume session {SessionId}", sessionId);
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "Error al pausar/reanudar la sesion.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 
@@ -213,23 +259,37 @@ public sealed partial class TimerPage : Page
     {
         if (sender is Button btn && btn.Tag is int sessionId)
         {
-            using var db = new AppDbContext();
-            var session = await db.Sessions.Include(s => s.Computer).FirstOrDefaultAsync(s => s.Id == sessionId);
-            if (session == null) return;
-
-            session.EndTime = DateTime.Now;
-            session.Status = SessionStatus.Completed;
-
-            if (session.SessionType == SessionType.Postpaid)
+            try
             {
-                var duration = session.EndTime.Value - session.StartTime - session.PausedDuration;
-                session.TotalCharge = session.RatePerHour * (decimal)duration.TotalHours;
-            }
+                using var db = new AppDbContext();
+                var session = await db.Sessions.Include(s => s.Computer).FirstOrDefaultAsync(s => s.Id == sessionId);
+                if (session == null) return;
 
-            session.Computer.Status = ComputerStatus.Available;
-            db.Entry(session).State = EntityState.Modified;
-            db.Entry(session.Computer).State = EntityState.Modified;
-            await db.SaveChangesAsync();
+                session.EndTime = DateTime.Now;
+                session.Status = SessionStatus.Completed;
+
+                if (session.SessionType == SessionType.Postpaid)
+                {
+                    var duration = session.EndTime.Value - session.StartTime - session.PausedDuration;
+                    session.TotalCharge = session.RatePerHour * (decimal)duration.TotalHours;
+                }
+
+                session.Computer.Status = ComputerStatus.Available;
+                db.Entry(session).State = EntityState.Modified;
+                db.Entry(session.Computer).State = EntityState.Modified;
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to end session {SessionId}", sessionId);
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "Error al finalizar la sesion.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 }

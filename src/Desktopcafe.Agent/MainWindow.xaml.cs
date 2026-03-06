@@ -1,6 +1,7 @@
 using Desktopcafe.Agent.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
+using Serilog;
 
 namespace Desktopcafe.Agent;
 
@@ -15,14 +16,28 @@ public sealed partial class MainWindow : Window
         var screenLock = App.Services.GetRequiredService<ScreenLockService>();
         screenLock.LockRequested += () => DispatcherQueue.TryEnqueue(() =>
         {
-            LockScreen.Visibility = Visibility.Visible;
-            SessionOverlay.Visibility = Visibility.Collapsed;
+            try
+            {
+                LockScreen.Visibility = Visibility.Visible;
+                SessionOverlay.Visibility = Visibility.Collapsed;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to update UI for lock screen");
+            }
         });
 
         screenLock.UnlockRequested += () => DispatcherQueue.TryEnqueue(() =>
         {
-            LockScreen.Visibility = Visibility.Collapsed;
-            SessionOverlay.Visibility = Visibility.Visible;
+            try
+            {
+                LockScreen.Visibility = Visibility.Collapsed;
+                SessionOverlay.Visibility = Visibility.Visible;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to update UI for unlock screen");
+            }
         });
     }
 }

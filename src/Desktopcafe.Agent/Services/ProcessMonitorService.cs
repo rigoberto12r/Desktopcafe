@@ -44,7 +44,7 @@ public class ProcessMonitorService
                     Log.Information("Killed blocked process: {Name}", name);
                 }
             }
-            catch { }
+            catch (Exception ex) { Log.Warning(ex, "Failed to kill blocked process {Name}", name); }
         }
     }
 

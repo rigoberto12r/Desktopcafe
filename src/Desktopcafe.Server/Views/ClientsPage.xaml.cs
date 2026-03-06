@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -24,9 +25,16 @@ public sealed partial class ClientsPage : Page
 
     private async Task LoadClientsAsync()
     {
-        using var db = new AppDbContext();
-        _allClients = await db.Clients.Where(c => c.IsActive).OrderBy(c => c.Name).ToListAsync();
-        ApplyFilter();
+        try
+        {
+            using var db = new AppDbContext();
+            _allClients = await db.Clients.Where(c => c.IsActive).OrderBy(c => c.Name).ToListAsync();
+            ApplyFilter();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load clients");
+        }
     }
 
     private void ApplyFilter()
@@ -89,10 +97,24 @@ public sealed partial class ClientsPage : Page
                 Code = GenerateCode()
             };
 
-            using var db = new AppDbContext();
-            await db.Clients.AddAsync(client);
-            await db.SaveChangesAsync();
-            await LoadClientsAsync();
+            try
+            {
+                using var db = new AppDbContext();
+                await db.Clients.AddAsync(client);
+                await db.SaveChangesAsync();
+                await LoadClientsAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to add client {ClientName}", name);
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "Error al agregar el cliente.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 
@@ -100,40 +122,54 @@ public sealed partial class ClientsPage : Page
     {
         if (sender is not Button btn || btn.Tag is not int clientId) return;
 
-        using var db = new AppDbContext();
-        var client = await db.Clients.FindAsync(clientId);
-        if (client == null) return;
-
-        var nameBox = new TextBox { Header = "Nombre", Text = client.Name };
-        var phoneBox = new TextBox { Header = "Telefono", Text = client.Phone ?? "" };
-        var emailBox = new TextBox { Header = "Email", Text = client.Email ?? "" };
-
-        var panel = new StackPanel { Spacing = 12, MinWidth = 350 };
-        panel.Children.Add(nameBox);
-        panel.Children.Add(phoneBox);
-        panel.Children.Add(emailBox);
-
-        var dialog = new ContentDialog
+        try
         {
-            Title = "Editar Cliente",
-            Content = panel,
-            PrimaryButtonText = "Guardar",
-            CloseButtonText = "Cancelar",
-            XamlRoot = XamlRoot
-        };
+            using var db = new AppDbContext();
+            var client = await db.Clients.FindAsync(clientId);
+            if (client == null) return;
 
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            var nameBox = new TextBox { Header = "Nombre", Text = client.Name };
+            var phoneBox = new TextBox { Header = "Telefono", Text = client.Phone ?? "" };
+            var emailBox = new TextBox { Header = "Email", Text = client.Email ?? "" };
+
+            var panel = new StackPanel { Spacing = 12, MinWidth = 350 };
+            panel.Children.Add(nameBox);
+            panel.Children.Add(phoneBox);
+            panel.Children.Add(emailBox);
+
+            var dialog = new ContentDialog
+            {
+                Title = "Editar Cliente",
+                Content = panel,
+                PrimaryButtonText = "Guardar",
+                CloseButtonText = "Cancelar",
+                XamlRoot = XamlRoot
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                var name = nameBox.Text?.Trim();
+                if (string.IsNullOrEmpty(name)) return;
+
+                client.Name = name;
+                client.Phone = string.IsNullOrWhiteSpace(phoneBox.Text) ? null : phoneBox.Text.Trim();
+                client.Email = string.IsNullOrWhiteSpace(emailBox.Text) ? null : emailBox.Text.Trim();
+
+                db.Entry(client).State = EntityState.Modified;
+                await db.SaveChangesAsync();
+                await LoadClientsAsync();
+            }
+        }
+        catch (Exception ex)
         {
-            var name = nameBox.Text?.Trim();
-            if (string.IsNullOrEmpty(name)) return;
-
-            client.Name = name;
-            client.Phone = string.IsNullOrWhiteSpace(phoneBox.Text) ? null : phoneBox.Text.Trim();
-            client.Email = string.IsNullOrWhiteSpace(emailBox.Text) ? null : emailBox.Text.Trim();
-
-            db.Entry(client).State = EntityState.Modified;
-            await db.SaveChangesAsync();
-            await LoadClientsAsync();
+            Log.Error(ex, "Failed to edit client {ClientId}", clientId);
+            await new ContentDialog
+            {
+                Title = "Error",
+                Content = "Error al editar el cliente.",
+                CloseButtonText = "Aceptar",
+                XamlRoot = XamlRoot
+            }.ShowAsync();
         }
     }
 
@@ -141,37 +177,51 @@ public sealed partial class ClientsPage : Page
     {
         if (sender is not Button btn || btn.Tag is not int clientId) return;
 
-        using var db = new AppDbContext();
-        var client = await db.Clients.FindAsync(clientId);
-        if (client == null) return;
-
-        var amountBox = new NumberBox
+        try
         {
-            Header = $"Saldo actual: ${client.Balance:F2}",
-            PlaceholderText = "Monto a recargar",
-            Minimum = 0.01,
-            Value = 0,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact
-        };
+            using var db = new AppDbContext();
+            var client = await db.Clients.FindAsync(clientId);
+            if (client == null) return;
 
-        var dialog = new ContentDialog
+            var amountBox = new NumberBox
+            {
+                Header = $"Saldo actual: ${client.Balance:F2}",
+                PlaceholderText = "Monto a recargar",
+                Minimum = 0.01,
+                Value = 0,
+                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact
+            };
+
+            var dialog = new ContentDialog
+            {
+                Title = $"Recargar Saldo - {client.Name}",
+                Content = amountBox,
+                PrimaryButtonText = "Recargar",
+                CloseButtonText = "Cancelar",
+                XamlRoot = XamlRoot
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                var amount = (decimal)amountBox.Value;
+                if (amount <= 0) return;
+
+                client.Balance += amount;
+                db.Entry(client).State = EntityState.Modified;
+                await db.SaveChangesAsync();
+                await LoadClientsAsync();
+            }
+        }
+        catch (Exception ex)
         {
-            Title = $"Recargar Saldo - {client.Name}",
-            Content = amountBox,
-            PrimaryButtonText = "Recargar",
-            CloseButtonText = "Cancelar",
-            XamlRoot = XamlRoot
-        };
-
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-        {
-            var amount = (decimal)amountBox.Value;
-            if (amount <= 0) return;
-
-            client.Balance += amount;
-            db.Entry(client).State = EntityState.Modified;
-            await db.SaveChangesAsync();
-            await LoadClientsAsync();
+            Log.Error(ex, "Failed to recharge balance for client {ClientId}", clientId);
+            await new ContentDialog
+            {
+                Title = "Error",
+                Content = "Error al recargar el saldo.",
+                CloseButtonText = "Aceptar",
+                XamlRoot = XamlRoot
+            }.ShowAsync();
         }
     }
 

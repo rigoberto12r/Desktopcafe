@@ -1,3 +1,5 @@
+using Serilog;
+
 namespace Desktopcafe.Server.Services;
 
 public class NavigationService
@@ -19,12 +21,28 @@ public class NavigationService
 
     public void NavigateTo<T>() where T : class
     {
-        CurrentPage = typeof(T);
+        try
+        {
+            CurrentPage = typeof(T);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to navigate to {PageType}", typeof(T).Name);
+            throw;
+        }
     }
 
     public void NavigateTo(Type pageType)
     {
-        ArgumentNullException.ThrowIfNull(pageType);
-        CurrentPage = pageType;
+        try
+        {
+            ArgumentNullException.ThrowIfNull(pageType);
+            CurrentPage = pageType;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to navigate to {PageType}", pageType?.Name ?? "null");
+            throw;
+        }
     }
 }

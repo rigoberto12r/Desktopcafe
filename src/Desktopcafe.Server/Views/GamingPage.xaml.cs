@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -22,16 +23,23 @@ public sealed partial class GamingPage : Page
 
     private async Task LoadGamesAsync()
     {
-        using var db = new AppDbContext();
-        var games = await db.Games.Where(g => g.IsActive).OrderBy(g => g.Name).ToListAsync();
-
-        GamesGrid.ItemsSource = games.Select(g => new
+        try
         {
-            g.Id,
-            g.Name,
-            g.Category,
-            PlaysText = $"{g.TimesPlayed} partidas"
-        }).ToList();
+            using var db = new AppDbContext();
+            var games = await db.Games.Where(g => g.IsActive).OrderBy(g => g.Name).ToListAsync();
+
+            GamesGrid.ItemsSource = games.Select(g => new
+            {
+                g.Id,
+                g.Name,
+                g.Category,
+                PlaysText = $"{g.TimesPlayed} partidas"
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load games");
+        }
     }
 
     private async void AddGame_Click(object sender, RoutedEventArgs e)
@@ -65,17 +73,31 @@ public sealed partial class GamingPage : Page
             var name = nameBox.Text?.Trim();
             if (string.IsNullOrEmpty(name)) return;
 
-            var game = new Game
+            try
             {
-                Name = name,
-                Category = categoryCombo.SelectedItem?.ToString() ?? "Otros",
-                ExePath = exePathBox.Text?.Trim() ?? ""
-            };
+                var game = new Game
+                {
+                    Name = name,
+                    Category = categoryCombo.SelectedItem?.ToString() ?? "Otros",
+                    ExePath = exePathBox.Text?.Trim() ?? ""
+                };
 
-            using var db = new AppDbContext();
-            await db.Games.AddAsync(game);
-            await db.SaveChangesAsync();
-            await LoadGamesAsync();
+                using var db = new AppDbContext();
+                await db.Games.AddAsync(game);
+                await db.SaveChangesAsync();
+                await LoadGamesAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to add game {Name}", name);
+                await new ContentDialog
+                {
+                    Title = "Error",
+                    Content = "No se pudo agregar el juego.",
+                    CloseButtonText = "Aceptar",
+                    XamlRoot = XamlRoot
+                }.ShowAsync();
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -24,20 +25,27 @@ public sealed partial class WiFiPage : Page
 
     private async Task LoadVouchersAsync()
     {
-        using var db = new AppDbContext();
-        var vouchers = await db.WiFiVouchers
-            .OrderByDescending(v => v.CreatedAt)
-            .Take(100)
-            .ToListAsync();
-
-        VoucherList.ItemsSource = vouchers.Select(v => new
+        try
         {
-            v.Code,
-            DurationText = $"{v.DurationMinutes} min",
-            StatusText = v.IsUsed ? "Usado" : "Disponible",
-            StatusColor = v.IsUsed ? "Gray" : "Green",
-            CreatedText = v.CreatedAt.ToString("dd/MM/yyyy HH:mm")
-        }).ToList();
+            using var db = new AppDbContext();
+            var vouchers = await db.WiFiVouchers
+                .OrderByDescending(v => v.CreatedAt)
+                .Take(100)
+                .ToListAsync();
+
+            VoucherList.ItemsSource = vouchers.Select(v => new
+            {
+                v.Code,
+                DurationText = $"{v.DurationMinutes} min",
+                StatusText = v.IsUsed ? "Usado" : "Disponible",
+                StatusColor = v.IsUsed ? "Gray" : "Green",
+                CreatedText = v.CreatedAt.ToString("dd/MM/yyyy HH:mm")
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load WiFi vouchers");
+        }
     }
 
     private async void GenerateVoucher_Click(object sender, RoutedEventArgs e)
@@ -52,10 +60,24 @@ public sealed partial class WiFiPage : Page
             ExpiresAt = DateTime.Now.AddDays(7)
         };
 
-        using var db = new AppDbContext();
-        await db.WiFiVouchers.AddAsync(voucher);
-        await db.SaveChangesAsync();
-        await LoadVouchersAsync();
+        try
+        {
+            using var db = new AppDbContext();
+            await db.WiFiVouchers.AddAsync(voucher);
+            await db.SaveChangesAsync();
+            await LoadVouchersAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to generate WiFi voucher");
+            await new ContentDialog
+            {
+                Title = "Error",
+                Content = "No se pudo generar el voucher WiFi.",
+                CloseButtonText = "Aceptar",
+                XamlRoot = XamlRoot
+            }.ShowAsync();
+        }
     }
 
     private static string GenerateVoucherCode()

@@ -2,6 +2,7 @@ using Desktopcafe.Core.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using Serilog;
 
 namespace Desktopcafe.Server.Views;
 
@@ -32,6 +33,9 @@ public sealed partial class DashboardPage : Page
             ActivityList.ItemsSource = dashboard.RecentActivity;
             AlertsList.ItemsSource = dashboard.Alerts;
         }
-        catch { /* Will show default values */ }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load dashboard data");
+        }
     }
 }

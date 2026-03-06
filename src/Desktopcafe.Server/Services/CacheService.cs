@@ -6,6 +6,7 @@ using Desktopcafe.Data;
 using Desktopcafe.Data.Repositories;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Serilog;
 
 namespace Desktopcafe.Server.Services;
 
@@ -53,14 +54,23 @@ public class CacheService : ICacheService
         }
 
         Interlocked.Increment(ref _misses);
-        var rates = await _db.RateConfigs.AsNoTracking().ToListAsync();
-        _memoryCache.Set(RatesKey, rates, new MemoryCacheEntryOptions
+
+        try
         {
-            AbsoluteExpirationRelativeToNow = RatesTtl,
-            Size = 1
-        });
-        _staticCache[RatesKey] = rates;
-        return rates;
+            var rates = await _db.RateConfigs.AsNoTracking().ToListAsync();
+            _memoryCache.Set(RatesKey, rates, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = RatesTtl,
+                Size = 1
+            });
+            _staticCache[RatesKey] = rates;
+            return rates;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load rates from database");
+            throw;
+        }
     }
 
     public async Task<List<Product>> GetActiveProductsAsync()
@@ -72,17 +82,26 @@ public class CacheService : ICacheService
         }
 
         Interlocked.Increment(ref _misses);
-        var products = await _db.Products
-            .AsNoTracking()
-            .Where(p => p.IsActive)
-            .ToListAsync();
-        _memoryCache.Set(ProductsKey, products, new MemoryCacheEntryOptions
+
+        try
         {
-            AbsoluteExpirationRelativeToNow = ProductsTtl,
-            Size = 1
-        });
-        _staticCache[ProductsKey] = products;
-        return products;
+            var products = await _db.Products
+                .AsNoTracking()
+                .Where(p => p.IsActive)
+                .ToListAsync();
+            _memoryCache.Set(ProductsKey, products, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = ProductsTtl,
+                Size = 1
+            });
+            _staticCache[ProductsKey] = products;
+            return products;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load active products from database");
+            throw;
+        }
     }
 
     public async Task<DashboardDto> GetDashboardAsync()
@@ -94,14 +113,23 @@ public class CacheService : ICacheService
         }
 
         Interlocked.Increment(ref _misses);
-        var dashboard = await _reportRepository.GetDashboardAsync();
-        _memoryCache.Set(DashboardKey, dashboard, new MemoryCacheEntryOptions
+
+        try
         {
-            AbsoluteExpirationRelativeToNow = DashboardTtl,
-            Size = 1
-        });
-        _staticCache[DashboardKey] = dashboard;
-        return dashboard;
+            var dashboard = await _reportRepository.GetDashboardAsync();
+            _memoryCache.Set(DashboardKey, dashboard, new MemoryCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = DashboardTtl,
+                Size = 1
+            });
+            _staticCache[DashboardKey] = dashboard;
+            return dashboard;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to load dashboard data");
+            throw;
+        }
     }
 
     public void InvalidateRates()
