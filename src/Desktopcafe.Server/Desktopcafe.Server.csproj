@@ -25,7 +25,7 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.DataGrid" Version="8.*" />
     <PackageReference Include="CommunityToolkit.WinUI.Animations" Version="8.*" />
-    <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="9.*" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.MessagePack" Version="9.*" />
     <PackageReference Include="LiveChartsCore.SkiaSharpView.WinUI" Version="2.*" />
     <PackageReference Include="QuestPDF" Version="2024.*" />
